@@ -46,8 +46,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
+      - name: Build image
+        uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          push: false
+          load: true
           tags: ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          severity: CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+
+      - name: Push image
+        run: docker push ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
