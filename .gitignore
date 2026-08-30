@@ -4,3 +4,5 @@ __pycache__/
 venv/
 app/data/
 .env
+SKILL.md
+C1_CICD_BUILD_PLAN.md
