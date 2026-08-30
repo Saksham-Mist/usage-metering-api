@@ -55,7 +55,7 @@ jobs:
           tags: ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
       - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0 — pinned by commit SHA, not tag, due to the Mar 2026 trivy-action supply-chain attack that poisoned 76 of 77 version tags
         with:
           image-ref: ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           severity: CRITICAL
