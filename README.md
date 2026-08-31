@@ -43,3 +43,5 @@ The Deployment's rolling-update strategy is `maxUnavailable: 0, maxSurge: 1` —
 5. The job exits non-zero even after a successful rollback — a rollback is a recovery, not a success; the bad commit still needs to be fixed before it can ship again.
 
 This is exercised directly and repeatably by [`.github/workflows/rollback-drill.yml`](.github/workflows/rollback-drill.yml) (manually triggered via `workflow_dispatch`), which deploys a known-good baseline, then deliberately deploys a version with the readiness probe pointed at `/broken` (an endpoint that always returns 500), confirms the old pods keep serving traffic throughout, confirms the rollout stalls, and confirms the automatic rollback restores a healthy deployment.
+
+Verified live in [Run #1](../../actions): while the broken pod sat stuck at `0/1` ready, both old pods stayed `Running` and `GET /health` returned `HTTP 200` the whole time; `kubectl rollout status --timeout=60s` timed out as expected, `kubectl rollout undo` restored the last healthy revision, and `/health` returned `HTTP 200` again afterward.
