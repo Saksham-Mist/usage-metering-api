@@ -1,8 +1,9 @@
+import os
 import sqlite3
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 DB_PATH = Path(__file__).parent / "data" / "usage.db"
@@ -14,6 +15,12 @@ class EventIn(BaseModel):
     api_key: str
     event_type: str
     quantity: float
+
+
+def check_ingest_secret(x_api_secret: str | None):
+    expected = os.environ.get("API_SECRET_KEY")
+    if expected and x_api_secret != expected:
+        raise HTTPException(status_code=401, detail="invalid or missing X-API-Secret header")
 
 
 def get_db():
@@ -34,7 +41,8 @@ def get_db():
 
 
 @app.post("/events", status_code=201)
-def create_event(event: EventIn):
+def create_event(event: EventIn, x_api_secret: str | None = Header(default=None)):
+    check_ingest_secret(x_api_secret)
     conn = get_db()
     try:
         conn.execute(

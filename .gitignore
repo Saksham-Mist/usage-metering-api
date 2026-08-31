@@ -6,3 +6,4 @@ app/data/
 .env
 SKILL.md
 C1_CICD_BUILD_PLAN.md
+k8s/secret.yaml
