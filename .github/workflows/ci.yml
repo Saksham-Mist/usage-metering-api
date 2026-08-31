@@ -65,3 +65,71 @@ jobs:
 
       - name: Push image
         run: docker push ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+# docker (image bnai) fir usko push (creds check)
+
+  deploy:
+    needs: build-and-push
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create ephemeral kind cluster
+        uses: helm/kind-action@ae94020eaf628e9b9b9f341a10cc0cdcf5c018fb # v1.11.0 — pinned by commit SHA
+        with:
+          cluster_name: ci-cluster
+
+      - name: Apply ConfigMap and Secret
+        run: |
+          kubectl apply -f k8s/configmap.yaml
+          kubectl create secret generic usage-metering-secret \
+            --from-literal=API_SECRET_KEY="${{ secrets.API_SECRET_KEY }}"
+
+      - name: Deploy app
+        run: |
+          sed "s|IMAGE_TAG|${{ github.sha }}|" k8s/deployment.yaml | kubectl apply -f -
+          kubectl apply -f k8s/service.yaml
+
+      - name: Wait for rollout, auto-rollback on failed health checks
+        run: |
+          if ! kubectl rollout status deployment/usage-metering --timeout=120s; then
+            echo "Rollout did not become healthy in time — rolling back to the last known-good revision."
+            kubectl rollout undo deployment/usage-metering
+            kubectl rollout status deployment/usage-metering --timeout=120s
+            echo "Rolled back successfully. Failing this job so the bad deploy attempt is visibly marked as failed."
+            exit 1
+          fi
+
+      - name: Verify zero-downtime rolling update
+        run: |
+          set -e
+          kubectl port-forward svc/usage-metering 8080:80 &
+          PF_PID=$!
+          sleep 3
+
+          : > curl_log.txt
+          (
+            for i in $(seq 1 40); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health || echo "000")
+              echo "$code" >> curl_log.txt
+              sleep 0.5
+            done
+          ) &
+          CURL_PID=$!
+
+          sleep 3
+          kubectl rollout restart deployment/usage-metering
+          kubectl rollout status deployment/usage-metering --timeout=120s
+
+          wait "$CURL_PID"
+          kill "$PF_PID" || true
+
+          echo "--- curl results ---"
+          sort curl_log.txt | uniq -c
+
+          if grep -qv '^200$' curl_log.txt; then
+            echo "Non-200 response(s) detected during rolling update — deploy is not zero-downtime."
+            exit 1
+          fi
+          echo "All $(wc -l < curl_log.txt) requests returned 200 during the rolling update."

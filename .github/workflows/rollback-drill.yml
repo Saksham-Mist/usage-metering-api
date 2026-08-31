@@ -1,0 +1,62 @@
+name: Rollback Drill
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rollback-drill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create ephemeral kind cluster
+        uses: helm/kind-action@ae94020eaf628e9b9b9f341a10cc0cdcf5c018fb # v1.11.0 — pinned by commit SHA
+        with:
+          cluster_name: rollback-drill
+
+      - name: Apply ConfigMap and Secret
+        run: |
+          kubectl apply -f k8s/configmap.yaml
+          kubectl create secret generic usage-metering-secret \
+            --from-literal=API_SECRET_KEY="${{ secrets.API_SECRET_KEY }}"
+
+      - name: Deploy a known-good baseline
+        run: |
+          sed "s|IMAGE_TAG|${{ github.sha }}|" k8s/deployment.yaml | kubectl apply -f -
+          kubectl apply -f k8s/service.yaml
+          kubectl rollout status deployment/usage-metering --timeout=120s
+
+      - name: Deploy a deliberately broken version (readiness probe pointed at a route that always 500s)
+        run: |
+          sed -e "s|IMAGE_TAG|${{ github.sha }}|" -e "s|path: /ready|path: /broken|" k8s/deployment.yaml | kubectl apply -f -
+
+      - name: Confirm old pods keep serving while the rollout is stuck
+        run: |
+          sleep 15
+          kubectl get pods -o wide
+          kubectl port-forward svc/usage-metering 8080:80 &
+          PF_PID=$!
+          sleep 3
+          curl -s -o /dev/null -w "GET /health during stuck rollout -> HTTP %{http_code}\n" http://localhost:8080/health
+          kill "$PF_PID" || true
+
+      - name: Confirm rollout stalls, then trigger automatic rollback
+        run: |
+          if ! kubectl rollout status deployment/usage-metering --timeout=60s; then
+            echo "Confirmed: rollout stalled on the failing readiness probe, as expected."
+            kubectl rollout undo deployment/usage-metering
+            kubectl rollout status deployment/usage-metering --timeout=120s
+            echo "Rollback complete — deployment restored to the last healthy revision."
+          else
+            echo "ERROR: rollout unexpectedly succeeded with a broken readiness probe — drill did not reproduce the failure."
+            exit 1
+          fi
+
+      - name: Confirm service is healthy after rollback
+        run: |
+          kubectl get pods -o wide
+          kubectl port-forward svc/usage-metering 8080:80 &
+          PF_PID=$!
+          sleep 3
+          curl -s -o /dev/null -w "GET /health after rollback -> HTTP %{http_code}\n" http://localhost:8080/health
+          kill "$PF_PID" || true

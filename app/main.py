@@ -95,3 +95,9 @@ def ready():
     except Exception:
         raise HTTPException(status_code=503, detail="database unavailable")
     return {"status": "ready"}
+
+
+@app.get("/broken")
+def broken():
+    """Always returns 500. Exists only so the rollback drill can point the readiness probe at a real failing route."""
+    raise HTTPException(status_code=500, detail="intentionally broken for rollback drill")
